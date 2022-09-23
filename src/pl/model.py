@@ -32,18 +32,22 @@ class BaseModel(pl.LightningModule):
         outer_loss, inner_loss, outer_acc, inner_acc = self.step(True, batch)
 
         self.log_dict(
-            {"metatrain/inner_loss": inner_loss.item(),
-             "metatrain/inner_accuracy": inner_acc.compute()},
+            {
+                "metatrain/inner_loss": inner_loss.item(),
+                "metatrain/inner_accuracy": inner_acc.compute(),
+            },
             on_epoch=False,
             on_step=True,
-            prog_bar=False
+            prog_bar=False,
         )
         self.log_dict(
-            {"metatrain/outer_loss": outer_loss.item(),
-             "metatrain/outer_accuracy": outer_acc.compute()},
+            {
+                "metatrain/outer_loss": outer_loss.item(),
+                "metatrain/outer_accuracy": outer_acc.compute(),
+            },
             on_epoch=False,
             on_step=True,
-            prog_bar=True
+            prog_bar=True,
         )
 
     def validation_step(self, batch: Any, batch_idx: int):
@@ -51,14 +55,18 @@ class BaseModel(pl.LightningModule):
         self.cnn.train()
         outer_loss, inner_loss, outer_acc, inner_acc = self.step(False, batch)
         self.log_dict(
-            {"metaval/inner_loss": inner_loss.item(),
-             "metaval/inner_accuracy": inner_acc.compute()},
-            prog_bar=False
+            {
+                "metaval/inner_loss": inner_loss.item(),
+                "metaval/inner_accuracy": inner_acc.compute(),
+            },
+            prog_bar=False,
         )
         self.log_dict(
-            {"metaval/outer_loss": outer_loss.item(),
-             "metaval/outer_accuracy": outer_acc.compute()},
-            prog_bar=True
+            {
+                "metaval/outer_loss": outer_loss.item(),
+                "metaval/outer_accuracy": outer_acc.compute(),
+            },
+            prog_bar=True,
         )
 
     def test_step(self, batch: Any, batch_idx: int):
@@ -66,23 +74,25 @@ class BaseModel(pl.LightningModule):
         self.cnn.train()
         outer_loss, inner_loss, outer_acc, inner_acc = self.step(False, batch)
         self.log_dict(
-            {"metatest/outer_loss": outer_loss.item(),
-             "metatest/inner_loss": inner_loss.item(),
-             "metatest/inner_accuracy": inner_acc.compute(),
-             "metatest/outer_accuracy": outer_acc.compute()},
-
+            {
+                "metatest/outer_loss": outer_loss.item(),
+                "metatest/inner_loss": inner_loss.item(),
+                "metatest/inner_accuracy": inner_acc.compute(),
+                "metatest/outer_accuracy": outer_acc.compute(),
+            },
         )
 
 
 class MAMLModel(BaseModel):
-
     def __init__(self, cfg: DictConfig, *args, **kwargs) -> None:
         super().__init__(cfg=cfg, *args, **kwargs)
-        self.cnn = hydra.utils.instantiate(cfg.model.torch_module,
-                                           num_classes=cfg.data.datamodule.nway)
+        self.cnn = hydra.utils.instantiate(
+            cfg.model.torch_module, num_classes=cfg.data.datamodule.nway
+        )
         self.cnn = self.cnn.to(device=self.device)
         self.inner_optimizer = hydra.utils.instantiate(
-            cfg.optim.inner_optimizer, params=self.cnn.parameters())
+            cfg.optim.inner_optimizer, params=self.cnn.parameters()
+        )
         self.cfg = cfg
         self.save_hyperparameters(cfg)
 
@@ -100,8 +110,8 @@ class MAMLModel(BaseModel):
     def step(self, train: bool, batch: Any):
         self.cnn.zero_grad()
         outer_optimizer = self.optimizers()
-        train_inputs, train_targets = batch['support']
-        test_inputs, test_targets = batch['query']
+        train_inputs, train_targets = batch["support"]
+        test_inputs, test_targets = batch["query"]
 
         train_inputs = train_inputs.to(device=self.device)
         train_targets = train_targets.to(device=self.device)
@@ -109,19 +119,20 @@ class MAMLModel(BaseModel):
         test_targets = test_targets.to(device=self.device)
 
         metric = pl.metrics.Accuracy()
-        outer_loss = torch.tensor(0., device=self.device)
-        inner_loss = torch.tensor(0., device='cpu')
+        outer_loss = torch.tensor(0.0, device=self.device)
+        inner_loss = torch.tensor(0.0, device="cpu")
         outer_accuracy = metric.clone()
         inner_accuracy = metric.clone()
-        for task_idx, (train_input, train_target, test_input,
-                       test_target) in enumerate(
-            zip(train_inputs, train_targets,
-                test_inputs, test_targets)):
+        for task_idx, (train_input, train_target, test_input, test_target) in enumerate(
+            zip(train_inputs, train_targets, test_inputs, test_targets)
+        ):
             track_higher_grads = True if train else False
-            with higher.innerloop_ctx(self.cnn, self.inner_optimizer,
-                                      copy_initial_weights=False,
-                                      track_higher_grads=track_higher_grads) as (
-                    fmodel, diffopt):
+            with higher.innerloop_ctx(
+                self.cnn,
+                self.inner_optimizer,
+                copy_initial_weights=False,
+                track_higher_grads=track_higher_grads,
+            ) as (fmodel, diffopt):
                 for k in range(self.cfg.data.datamodule.num_inner_steps):
                     train_logit = fmodel(train_input)
                     loss = F.cross_entropy(train_logit, train_target)
@@ -130,8 +141,7 @@ class MAMLModel(BaseModel):
                 with torch.no_grad():
                     train_logit = fmodel(train_input)
                     train_preds = torch.softmax(train_logit, dim=-1)
-                    inner_loss += F.cross_entropy(train_logit,
-                                                  train_target).cpu()
+                    inner_loss += F.cross_entropy(train_logit, train_target).cpu()
                     inner_accuracy.update(train_preds.cpu(), train_target.cpu())
 
                 test_logit = fmodel(test_input)
@@ -150,7 +160,7 @@ class MAMLModel(BaseModel):
         return outer_loss, inner_loss, outer_accuracy, inner_accuracy
 
     def configure_optimizers(
-            self,
+        self,
     ) -> Union[Optimizer, Tuple[Sequence[Optimizer], Sequence[Any]]]:
         outer_optimizer = hydra.utils.instantiate(
             self.cfg.optim.outer_optimizer, params=self.parameters()
